@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label"
 import { getNoiseFilter } from "@/lib/audio/noise-filter"
 import { getEnhancedSpeechRecognition } from "@/lib/enhanced-speech-recognition"
 
-export function NoiseFilterVisualizer() {
+export default function NoiseFilterVisualizer() {
   const [isEnabled, setIsEnabled] = useState(false)
   const [threshold, setThreshold] = useState(15)
   const [isAdaptive, setIsAdaptive] = useState(true)

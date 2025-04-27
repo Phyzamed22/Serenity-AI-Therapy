@@ -61,7 +61,6 @@
     "@supabase/supabase-js": "latest",
     "@supabase/ssr": "latest",
     "@supabase/auth-helpers-nextjs": "latest",
-    "@groq/groq-sdk": "latest",
     "@ai-sdk/groq": "latest",
     "ai": "latest",
     "face-api.js": "latest",
