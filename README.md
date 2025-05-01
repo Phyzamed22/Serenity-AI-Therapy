@@ -1,30 +1,24 @@
-# Serenity
+Serenity – AI-Powered Virtual Therapist
+Serenity is an AI-driven mental health companion that goes beyond basic chatbot therapy. By integrating multimodal emotion analysis, real-time voice interaction, and personalized psychological support, Serenity offers a futuristic take on mental well-being.
 
-*Automatically synced with your [v0.dev](https://v0.dev) deployments*
+Features
+Multimodal Emotion Detection
+Uses facial expressions, voice tone, eye movement, and language to assess emotional and mental states.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/phyzamed22s-projects/v0-serenity)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.dev-black?style=for-the-badge)](https://v0.dev/chat/projects/qhZMaT2OF8H)
+Advanced AI models analyze trauma, stress, and behavioral cues in real time.
 
-## Overview
+AI Therapist
+Personalized conversations tailored to your emotional state and mental health history.
 
-This repository will stay in sync with your deployed chats on [v0.dev](https://v0.dev).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.dev](https://v0.dev).
+Adapts dynamically using sentiment, context, and detected psychological cues.
 
-## Deployment
+Voice-Based Interaction
+Natural, real-time voice conversations using Speech-to-Text (STT) and Text-to-Speech (TTS).
 
-Your project is live at:
+Interruption handling, turn-taking, and wake word activation powered by LiveKit.
 
-**[https://vercel.com/phyzamed22s-projects/v0-serenity](https://vercel.com/phyzamed22s-projects/v0-serenity)**
+Secure & Private
+On-device and encrypted processing for maximum data privacy.
 
-## Build your app
+Built with ethical AI and therapy-grade standards in mind.
 
-Continue building your app on:
-
-**[https://v0.dev/chat/projects/qhZMaT2OF8H](https://v0.dev/chat/projects/qhZMaT2OF8H)**
-
-## How It Works
-
-1. Create and modify your project using [v0.dev](https://v0.dev)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
