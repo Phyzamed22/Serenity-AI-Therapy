@@ -1,66 +1,110 @@
-import fs from "fs"
-import path from "path"
+/**
+ * Knowledge base service for the Serenity application
+ * Manages therapeutic knowledge content and interfaces with the vector store
+ */
 
+import { type VectorStore, getVectorStore } from "./vector-store"
+
+// Interface for knowledge entries
 export interface KnowledgeEntry {
   id: string
+  title: string
   content: string
   category: string
   tags: string[]
   source?: string
 }
 
-let knowledgeBase: KnowledgeEntry[] | null = null
+// Main knowledge base class
+export class KnowledgeBase {
+  private vectorStore: VectorStore
 
-/**
- * Loads the therapy knowledge base from a JSON file
- */
-export async function loadKnowledgeBase(filePath?: string): Promise<KnowledgeEntry[]> {
-  // Return cached knowledge base if already loaded
-  if (knowledgeBase) {
-    return knowledgeBase
+  constructor(vectorStore: VectorStore) {
+    this.vectorStore = vectorStore
   }
 
-  try {
-    // Default path if not provided
-    const actualPath = filePath || path.join(process.cwd(), "data", "therapy-knowledge.json")
+  // Add a single entry to the knowledge base
+  public async addEntry(entry: KnowledgeEntry): Promise<boolean> {
+    try {
+      await this.vectorStore.addDocument({
+        id: entry.id,
+        text: entry.content,
+        metadata: {
+          title: entry.title,
+          category: entry.category,
+          tags: entry.tags,
+          source: entry.source || "internal",
+        },
+      })
+      return true
+    } catch (error) {
+      console.error("Error adding entry to knowledge base:", error)
+      return false
+    }
+  }
 
-    // Read and parse the JSON file
-    const fileContent = await fs.promises.readFile(actualPath, "utf-8")
-    knowledgeBase = JSON.parse(fileContent) as KnowledgeEntry[]
+  // Add multiple entries to the knowledge base
+  public async addEntries(entries: KnowledgeEntry[]): Promise<number> {
+    let successCount = 0
 
-    console.log(`✅ Loaded ${knowledgeBase.length} therapy knowledge entries`)
-    return knowledgeBase
-  } catch (error) {
-    console.error("Error loading knowledge base:", error)
-    // Return empty array as fallback
-    return []
+    for (const entry of entries) {
+      const success = await this.addEntry(entry)
+      if (success) successCount++
+    }
+
+    return successCount
+  }
+
+  // Search the knowledge base for relevant content
+  public async search(query: string, limit = 5): Promise<KnowledgeEntry[]> {
+    try {
+      const results = await this.vectorStore.search(query, limit)
+
+      return results.map((result) => ({
+        id: result.id,
+        title: result.metadata?.title || "Untitled",
+        content: result.text,
+        category: result.metadata?.category || "general",
+        tags: result.metadata?.tags || [],
+        source: result.metadata?.source,
+      }))
+    } catch (error) {
+      console.error("Error searching knowledge base:", error)
+      return []
+    }
+  }
+
+  // Check if the knowledge base is populated
+  public async isPopulated(): Promise<boolean> {
+    try {
+      const count = await this.vectorStore.getDocumentCount()
+      return count > 0
+    } catch (error) {
+      console.error("Error checking if knowledge base is populated:", error)
+      return false
+    }
+  }
+
+  // Clear the knowledge base
+  public async clear(): Promise<boolean> {
+    try {
+      await this.vectorStore.clearAll()
+      return true
+    } catch (error) {
+      console.error("Error clearing knowledge base:", error)
+      return false
+    }
   }
 }
 
-/**
- * Filters knowledge base entries by category and tags
- */
-export function filterKnowledgeBase(
-  entries: KnowledgeEntry[],
-  categories?: string[],
-  tags?: string[],
-): KnowledgeEntry[] {
-  return entries.filter((entry) => {
-    // Filter by category if specified
-    if (categories && categories.length > 0) {
-      if (!categories.includes(entry.category)) {
-        return false
-      }
-    }
+// Singleton instance
+let instance: KnowledgeBase | null = null
 
-    // Filter by tags if specified
-    if (tags && tags.length > 0) {
-      // Check if entry has at least one of the specified tags
-      if (!entry.tags.some((tag) => tags.includes(tag))) {
-        return false
-      }
-    }
-
-    return true
-  })
+// Getter function for the singleton instance
+export function getKnowledgeBase(): KnowledgeBase {
+  if (!instance) {
+    const vectorStore = getVectorStore()
+    instance = new KnowledgeBase(vectorStore)
+  }
+  return instance
 }

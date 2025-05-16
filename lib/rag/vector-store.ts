@@ -1,144 +1,137 @@
-import type { Pipeline } from "@xenova/transformers"
-import type { KnowledgeEntry } from "./knowledge-base"
+/**
+ * Vector store service for the Serenity application
+ * Manages embeddings and vector search for the RAG system
+ */
 
-// Interface for vector search results
-export interface SearchResult {
-  entry: KnowledgeEntry
-  score: number
+import { createClient } from "@/lib/supabase/server"
+
+// Interface for document with metadata
+export interface Document {
+  id: string
+  text: string
+  metadata?: Record<string, any>
 }
 
+// Interface for search result
+export interface SearchResult extends Document {
+  similarity: number
+}
+
+// Main vector store class
 export class VectorStore {
-  private embeddings: number[][] = []
-  private entries: KnowledgeEntry[] = []
-  private pipeline: Pipeline | null = null
-  private isInitialized = false
+  private supabase: ReturnType<typeof createClient>
 
-  /**
-   * Initialize the vector store with knowledge entries
-   */
-  async initialize(entries: KnowledgeEntry[]): Promise<void> {
-    if (this.isInitialized) return
+  constructor() {
+    this.supabase = createClient()
+  }
 
+  // Add a document to the vector store
+  public async addDocument(document: Document): Promise<boolean> {
     try {
-      // Load the embedding pipeline
-      const { pipeline } = await import("@xenova/transformers")
-      this.pipeline = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2")
+      // Generate embedding using Supabase's pgvector
+      const { data: embedding, error: embeddingError } = await this.supabase.rpc("generate_embedding", {
+        input_text: document.text,
+      })
 
-      // Store the entries
-      this.entries = entries
+      if (embeddingError) {
+        throw new Error(`Error generating embedding: ${embeddingError.message}`)
+      }
 
-      // Generate embeddings for all entries
-      console.log("Generating embeddings for knowledge base...")
-      this.embeddings = await this.generateEmbeddings(entries.map((e) => e.content))
+      // Insert document with embedding
+      const { error: insertError } = await this.supabase.from("vector_store").insert({
+        id: document.id,
+        content: document.text,
+        embedding,
+        metadata: document.metadata || {},
+      })
 
-      this.isInitialized = true
-      console.log(`✅ Vector store initialized with ${entries.length} entries`)
+      if (insertError) {
+        throw new Error(`Error inserting document: ${insertError.message}`)
+      }
+
+      return true
     } catch (error) {
-      console.error("Error initializing vector store:", error)
-      throw new Error("Failed to initialize vector store")
+      console.error("Error adding document to vector store:", error)
+      return false
     }
   }
 
-  /**
-   * Generate embeddings for a list of texts
-   */
-  private async generateEmbeddings(texts: string[]): Promise<number[][]> {
-    if (!this.pipeline) {
-      throw new Error("Pipeline not initialized")
+  // Search for similar documents
+  public async search(query: string, limit = 5): Promise<SearchResult[]> {
+    try {
+      // Generate embedding for the query
+      const { data: embedding, error: embeddingError } = await this.supabase.rpc("generate_embedding", {
+        input_text: query,
+      })
+
+      if (embeddingError) {
+        throw new Error(`Error generating embedding: ${embeddingError.message}`)
+      }
+
+      // Search for similar documents
+      const { data: results, error: searchError } = await this.supabase.rpc("match_documents", {
+        query_embedding: embedding,
+        match_threshold: 0.5,
+        match_count: limit,
+      })
+
+      if (searchError) {
+        throw new Error(`Error searching documents: ${searchError.message}`)
+      }
+
+      // Format results
+      return (results || []).map((result) => ({
+        id: result.id,
+        text: result.content,
+        metadata: result.metadata,
+        similarity: result.similarity,
+      }))
+    } catch (error) {
+      console.error("Error searching vector store:", error)
+      return []
     }
-
-    const embeddings: number[][] = []
-
-    // Process in batches to avoid memory issues
-    const batchSize = 16
-    for (let i = 0; i < texts.length; i += batchSize) {
-      const batch = texts.slice(i, i + batchSize)
-      const results = await Promise.all(
-        batch.map(async (text) => {
-          const result = await this.pipeline!({
-            inputs: text,
-            pooling: "mean",
-            normalize: true,
-          })
-          return Array.from(result.data)
-        }),
-      )
-      embeddings.push(...results)
-    }
-
-    return embeddings
   }
 
-  /**
-   * Calculate cosine similarity between two vectors
-   */
-  private cosineSimilarity(a: number[], b: number[]): number {
-    if (a.length !== b.length) {
-      throw new Error("Vectors must have the same dimensions")
-    }
+  // Get the count of documents in the vector store
+  public async getDocumentCount(): Promise<number> {
+    try {
+      const { count, error } = await this.supabase.from("vector_store").select("*", { count: "exact", head: true })
 
-    let dotProduct = 0
-    let normA = 0
-    let normB = 0
+      if (error) {
+        throw new Error(`Error getting document count: ${error.message}`)
+      }
 
-    for (let i = 0; i < a.length; i++) {
-      dotProduct += a[i] * b[i]
-      normA += a[i] * a[i]
-      normB += b[i] * b[i]
-    }
-
-    normA = Math.sqrt(normA)
-    normB = Math.sqrt(normB)
-
-    if (normA === 0 || normB === 0) {
+      return count || 0
+    } catch (error) {
+      console.error("Error getting document count:", error)
       return 0
     }
-
-    return dotProduct / (normA * normB)
   }
 
-  /**
-   * Search for similar entries based on a query
-   */
-  async search(query: string, topK = 5): Promise<SearchResult[]> {
-    if (!this.isInitialized || !this.pipeline) {
-      throw new Error("Vector store not initialized")
+  // Clear all documents from the vector store
+  public async clearAll(): Promise<boolean> {
+    try {
+      const { error } = await this.supabase.from("vector_store").delete().neq("id", "placeholder") // Delete all rows
+
+      if (error) {
+        throw new Error(`Error clearing vector store: ${error.message}`)
+      }
+
+      return true
+    } catch (error) {
+      console.error("Error clearing vector store:", error)
+      return false
     }
-
-    // Generate embedding for the query
-    const queryEmbedding = (await this.generateEmbeddings([query]))[0]
-
-    // Calculate similarity scores
-    const scores = this.embeddings.map((embedding, index) => ({
-      index,
-      score: this.cosineSimilarity(queryEmbedding, embedding),
-    }))
-
-    // Sort by score in descending order and take top K
-    const topResults = scores.sort((a, b) => b.score - a.score).slice(0, topK)
-
-    // Map to search results
-    return topResults.map((result) => ({
-      entry: this.entries[result.index],
-      score: result.score,
-    }))
   }
 }
 
 // Singleton instance
-let vectorStoreInstance: VectorStore | null = null
+let instance: VectorStore | null = null
 
-export async function getVectorStore(entries?: KnowledgeEntry[]): Promise<VectorStore> {
-  if (!vectorStoreInstance) {
-    vectorStoreInstance = new VectorStore()
-
-    if (entries) {
-      await vectorStoreInstance.initialize(entries)
-    }
-  } else if (entries) {
-    // Reinitialize with new entries if provided
-    await vectorStoreInstance.initialize(entries)
+// Getter function for the singleton instance
+export function getVectorStore(): VectorStore {
+  if (!instance) {
+    instance = new VectorStore()
   }
-
-  return vectorStoreInstance
+  return instance
 }

@@ -1,68 +1,79 @@
-// Environment variables helper
+/**
+ * Environment variables for the Serenity application
+ * Provides type-safe access to environment variables
+ */
 
-interface EnvVariables {
+// Environment variables interface
+export interface Env {
+  // Supabase
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
   NEXT_PUBLIC_SUPABASE_URL: string
   NEXT_PUBLIC_SUPABASE_ANON_KEY: string
+
+  // Groq
   GROQ_API_KEY: string
+
+  // ElevenLabs
   ELEVENLABS_API_KEY: string
   ELEVENLABS_VOICE_ID: string
+
+  // Redis/KV
+  KV_URL: string
+  KV_REST_API_TOKEN: string
+  KV_REST_API_READ_ONLY_TOKEN: string
+
+  // Database
+  POSTGRES_URL: string
+  POSTGRES_PRISMA_URL: string
+  POSTGRES_URL_NON_POOLING: string
+  POSTGRES_USER: string
+  POSTGRES_HOST: string
+  POSTGRES_PASSWORD: string
+  POSTGRES_DATABASE: string
 }
 
-// Default values for development (these would be replaced by actual env vars in production)
-const defaultValues: Partial<EnvVariables> = {
-  ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || "",
-  ELEVENLABS_VOICE_ID: process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM", // Default voice ID (Rachel)
-  // Add default values for Supabase (for development only)
-  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
-}
+// Helper function to get environment variables with type safety
+function getEnvVariable(key: keyof Env): string {
+  const value = process.env[key]
 
-export function getEnvVariable(key: keyof EnvVariables): string {
-  // For client-side env vars
-  if (key.startsWith("NEXT_PUBLIC_") && typeof window !== "undefined") {
-    // Try to get from window.__ENV__ first (set during initialization)
-    const windowEnv = (window as any).__ENV__?.[key]
-    if (windowEnv) return windowEnv
-
-    // Then try process.env (for Next.js)
-    const processEnv = process.env[key]
-    if (processEnv) return processEnv
-
-    // Finally fall back to default values
-    return defaultValues[key] || ""
-  }
-
-  // For server-side env vars
-  return process.env[key] || defaultValues[key] || ""
-}
-
-// Helper to get all required env vars for a component
-export function getRequiredEnvVars(keys: Array<keyof EnvVariables>): Partial<EnvVariables> {
-  const vars: Partial<EnvVariables> = {}
-
-  keys.forEach((key) => {
-    vars[key] = getEnvVariable(key)
-  })
-
-  return vars
-}
-
-// Get ElevenLabs credentials
-export function getElevenLabsCredentials(): { apiKey: string; voiceId: string } {
-  return {
-    apiKey: getEnvVariable("ELEVENLABS_API_KEY"),
-    voiceId: getEnvVariable("ELEVENLABS_VOICE_ID"),
-  }
-}
-
-// Initialize environment variables for client-side
-export function initClientEnv(): void {
-  if (typeof window !== "undefined") {
-    ;(window as any).__ENV__ = {
-      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  if (!value) {
+    // In development, warn about missing variables
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`Missing environment variable: ${key}`)
     }
+    return ""
   }
+
+  return value
+}
+
+// Export environment variables
+export const env: Env = {
+  // Supabase
+  SUPABASE_URL: getEnvVariable("SUPABASE_URL"),
+  SUPABASE_ANON_KEY: getEnvVariable("SUPABASE_ANON_KEY"),
+  NEXT_PUBLIC_SUPABASE_URL: getEnvVariable("NEXT_PUBLIC_SUPABASE_URL"),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: getEnvVariable("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+
+  // Groq
+  GROQ_API_KEY: getEnvVariable("GROQ_API_KEY"),
+
+  // ElevenLabs
+  ELEVENLABS_API_KEY: getEnvVariable("ELEVENLABS_API_KEY"),
+  ELEVENLABS_VOICE_ID: getEnvVariable("ELEVENLABS_VOICE_ID"),
+
+  // Redis/KV
+  KV_URL: getEnvVariable("KV_URL"),
+  KV_REST_API_TOKEN: getEnvVariable("KV_REST_API_TOKEN"),
+  KV_REST_API_READ_ONLY_TOKEN: getEnvVariable("KV_REST_API_READ_ONLY_TOKEN"),
+
+  // Database
+  POSTGRES_URL: getEnvVariable("POSTGRES_URL"),
+  POSTGRES_PRISMA_URL: getEnvVariable("POSTGRES_PRISMA_URL"),
+  POSTGRES_URL_NON_POOLING: getEnvVariable("POSTGRES_URL_NON_POOLING"),
+  POSTGRES_USER: getEnvVariable("POSTGRES_USER"),
+  POSTGRES_HOST: getEnvVariable("POSTGRES_HOST"),
+  POSTGRES_PASSWORD: getEnvVariable("POSTGRES_PASSWORD"),
+  POSTGRES_DATABASE: getEnvVariable("POSTGRES_DATABASE"),
 }

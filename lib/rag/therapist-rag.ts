@@ -1,183 +1,154 @@
-import { groq } from "@ai-sdk/groq"
+import { createClient } from "@supabase/supabase-js"
 import { generateText } from "ai"
-import { loadKnowledgeBase, type KnowledgeEntry } from "./knowledge-base"
-import { getVectorStore, type SearchResult } from "./vector-store"
+import { groq } from "@ai-sdk/groq"
+import { KnowledgeBase } from "./knowledge-base"
+import { VectorStore } from "./vector-store"
+import type { Database } from "../database.types"
+import { env } from "../env"
 
-interface TherapistRAGOptions {
-  modelId?: string
-  temperature?: number
-  maxTokens?: number
-  topK?: number
-  systemPromptTemplate?: string
-}
-
-const DEFAULT_SYSTEM_PROMPT = `You are Serenity, an emotionally intelligent, trauma-informed virtual therapist.
-
-Your role is to deeply understand the user's emotions, thoughts, and mental health challenges through conversation. You speak in a calming, compassionate, and reassuring tone.
-
-Use the following therapy knowledge to guide your response:
-{context}
-
-You never make a medical diagnosis or suggest medications. Instead, you use evidence-based methods such as Cognitive Behavioral Therapy (CBT), trauma-informed care, and reflective listening.
-
-If a user expresses signs of distress, trauma, depression, or self-harm, respond with empathy and encourage seeking professional help. Always keep the user grounded in the present moment and validated.
-
-Structure your responses with:
-- Validate: Acknowledge their feelings
-- Reflect: Mirror their emotional experience
-- Explore: Ask a thoughtful question to deepen understanding
-- Support: Offer a supportive statement that reinforces their worth
-
-Keep your responses concise (2-4 sentences per section) unless the situation calls for more detailed explanation.
-Do not disclose that you are an AI or mention your programming - stay in character as a therapist named Serenity.`
-
+/**
+ * TherapistRAG class that provides RAG (Retrieval-Augmented Generation) capabilities
+ * for the virtual therapist, enhancing responses with relevant therapeutic knowledge.
+ */
 export class TherapistRAG {
-  private knowledgeBase: KnowledgeEntry[] = []
-  private isInitialized = false
-  private options: Required<TherapistRAGOptions>
+  private knowledgeBase: KnowledgeBase
+  private vectorStore: VectorStore
+  private supabase: ReturnType<typeof createClient<Database>>
 
-  constructor(options?: TherapistRAGOptions) {
-    this.options = {
-      modelId: options?.modelId || "llama3-70b-8192",
-      temperature: options?.temperature ?? 0.7,
-      maxTokens: options?.maxTokens || 800,
-      topK: options?.topK || 5,
-      systemPromptTemplate: options?.systemPromptTemplate || DEFAULT_SYSTEM_PROMPT,
-    }
-  }
+  constructor() {
+    // Initialize the knowledge base and vector store
+    this.knowledgeBase = new KnowledgeBase()
+    this.vectorStore = new VectorStore()
 
-  /**
-   * Initialize the RAG system with the knowledge base
-   */
-  async initialize(): Promise<void> {
-    if (this.isInitialized) return
-
-    try {
-      // Load knowledge base
-      this.knowledgeBase = await loadKnowledgeBase()
-
-      // Initialize vector store
-      const vectorStore = await getVectorStore(this.knowledgeBase)
-
-      this.isInitialized = true
-      console.log("✅ TherapistRAG initialized successfully")
-    } catch (error) {
-      console.error("Error initializing TherapistRAG:", error)
-      throw new Error("Failed to initialize TherapistRAG")
-    }
+    // Initialize Supabase client
+    this.supabase = createClient<Database>(env.SUPABASE_URL, env.SUPABASE_ANON_KEY)
   }
 
   /**
    * Generate a response using RAG
+   * @param userInput The user's input
+   * @param sessionHistory Previous conversation history
+   * @param userProfile User profile information
+   * @returns The generated response
    */
-  async generateResponse(
-    query: string,
-    messages: Array<{ role: string; content: string }>,
-    emotionData?: {
-      facialEmotion?: string
-      voiceTone?: string
-      textSentiment?: string
-    },
+  public async generateResponse(
+    userInput: string,
+    sessionHistory: string[] = [],
+    userProfile: any = {},
   ): Promise<string> {
-    if (!this.isInitialized) {
-      await this.initialize()
-    }
-
     try {
-      // Get vector store
-      const vectorStore = await getVectorStore()
+      // Retrieve relevant knowledge from the vector store
+      const relevantKnowledge = await this.retrieveRelevantKnowledge(userInput)
 
-      // Search for relevant knowledge
-      const searchResults = await vectorStore.search(query, this.options.topK)
+      // Construct the prompt with the retrieved knowledge
+      const prompt = this.constructPrompt(userInput, sessionHistory, relevantKnowledge, userProfile)
 
-      // Format context from search results
-      const context = this.formatContext(searchResults)
+      // Generate the response using the LLM
+      const response = await this.generateWithLLM(prompt)
 
-      // Create system prompt with context
-      const systemPrompt = this.options.systemPromptTemplate.replace("{context}", context)
-
-      // Format user message with emotion metadata if available
-      let enhancedUserMessage = query
-      if (emotionData) {
-        const emotionPrefix = []
-        if (emotionData.facialEmotion) emotionPrefix.push(`facial: ${emotionData.facialEmotion}`)
-        if (emotionData.voiceTone) emotionPrefix.push(`voice: ${emotionData.voiceTone}`)
-        if (emotionData.textSentiment) emotionPrefix.push(`sentiment: ${emotionData.textSentiment}`)
-
-        if (emotionPrefix.length > 0) {
-          enhancedUserMessage = `[User Emotion: ${emotionPrefix.join(", ")}]\n${query}`
-        }
-      }
-
-      // Update the last user message with enhanced content
-      const formattedMessages = messages.map((msg) => {
-        if (msg.role === "user" && messages.indexOf(msg) === messages.length - 1) {
-          return { role: "user", content: enhancedUserMessage }
-        }
-        return msg
-      })
-
-      // Add system prompt
-      formattedMessages.unshift({ role: "system", content: systemPrompt })
-
-      // Generate response using Groq
-      const { text } = await generateText({
-        model: groq(this.options.modelId),
-        messages: formattedMessages,
-        temperature: this.options.temperature,
-        maxTokens: this.options.maxTokens,
-      })
-
-      return this.postProcessResponse(text)
+      return response
     } catch (error) {
       console.error("Error generating RAG response:", error)
-      return "I'm here to listen. Would you like to tell me more about how you're feeling?"
+      return "I'm sorry, I'm having trouble processing your request right now. Could you try again?"
     }
   }
 
   /**
-   * Format context from search results
+   * Retrieve relevant knowledge from the vector store
+   * @param query The query to search for
+   * @returns Relevant knowledge as a string
    */
-  private formatContext(results: SearchResult[]): string {
-    return results
-      .map((result, index) => {
-        return `[${index + 1}] ${result.entry.content}`
+  private async retrieveRelevantKnowledge(query: string): Promise<string> {
+    try {
+      // Get embeddings for the query
+      const results = await this.vectorStore.search(query, 5)
+
+      // Format the results
+      return results.map((result) => result.content).join("\n\n")
+    } catch (error) {
+      console.error("Error retrieving knowledge:", error)
+      return ""
+    }
+  }
+
+  /**
+   * Construct the prompt for the LLM
+   * @param userInput The user's input
+   * @param sessionHistory Previous conversation history
+   * @param relevantKnowledge Relevant knowledge retrieved from the vector store
+   * @param userProfile User profile information
+   * @returns The constructed prompt
+   */
+  private constructPrompt(
+    userInput: string,
+    sessionHistory: string[],
+    relevantKnowledge: string,
+    userProfile: any,
+  ): string {
+    // Format the session history
+    const formattedHistory = sessionHistory
+      .map((message, i) => `${i % 2 === 0 ? "User" : "Therapist"}: ${message}`)
+      .join("\n")
+
+    // Format the user profile
+    const formattedProfile = Object.entries(userProfile)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join("\n")
+
+    // Construct the full prompt
+    return `
+You are a compassionate and knowledgeable virtual therapist named Serenity.
+Your goal is to provide supportive, empathetic responses that help the user process their emotions and thoughts.
+
+User Profile:
+${formattedProfile}
+
+Previous Conversation:
+${formattedHistory}
+
+Relevant Therapeutic Knowledge:
+${relevantKnowledge}
+
+User's Current Message: ${userInput}
+
+Respond as Serenity, the virtual therapist. Be empathetic, supportive, and insightful.
+Incorporate relevant therapeutic concepts when appropriate, but maintain a conversational tone.
+Focus on understanding the user's emotions and providing helpful guidance.
+`
+  }
+
+  /**
+   * Generate a response using the LLM
+   * @param prompt The prompt to send to the LLM
+   * @returns The generated response
+   */
+  private async generateWithLLM(prompt: string): Promise<string> {
+    try {
+      const { text } = await generateText({
+        model: groq("llama3-70b-8192"),
+        prompt,
+        maxTokens: 1000,
+        temperature: 0.7,
       })
-      .join("\n\n")
-  }
 
-  /**
-   * Post-process the response for safety and therapeutic quality
-   */
-  private postProcessResponse(text: string): string {
-    // Remove any diagnostic language
-    let safeText = text.replace(
-      /you (are|seem|appear to be|might be|could be) (depressed|anxious|bipolar|schizophrenic|mentally ill)/gi,
-      "you're experiencing some difficult emotions",
-    )
-
-    // Replace prescriptive medical advice
-    safeText = safeText.replace(
-      /you (should|need to|must) (take medication|see a psychiatrist|get medication)/gi,
-      "speaking with a healthcare professional might be helpful",
-    )
-
-    // Ensure response has a grounding element if it seems too abstract
-    if (!safeText.includes("feel") && !safeText.includes("emotion") && safeText.length > 100) {
-      safeText += " How does this resonate with you right now?"
+      return text
+    } catch (error) {
+      console.error("Error generating with LLM:", error)
+      throw error
     }
-
-    return safeText
   }
 }
 
 // Singleton instance
 let therapistRAGInstance: TherapistRAG | null = null
 
-export function getTherapistRAG(options?: TherapistRAGOptions): TherapistRAG {
+/**
+ * Get the singleton instance of TherapistRAG
+ * This ensures only one instance is created and reused throughout the application
+ */
+export function getTherapistRAG(): TherapistRAG {
   if (!therapistRAGInstance) {
-    therapistRAGInstance = new TherapistRAG(options)
+    therapistRAGInstance = new TherapistRAG()
   }
-
   return therapistRAGInstance
 }
