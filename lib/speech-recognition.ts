@@ -1,122 +1,167 @@
-/**
- * Speech recognition service for the Serenity application
- * Provides browser-based speech recognition capabilities
- */
+// Speech recognition service
 
-// Define the result interface for speech recognition
-export interface SpeechRecognitionResult {
-  transcript: string
-  isFinal: boolean
-  confidence: number
+interface SpeechRecognitionOptions {
+  continuous?: boolean
+  interimResults?: boolean
+  language?: string
 }
 
-// Define the listener interface for speech recognition events
-export interface SpeechRecognitionListener {
-  onResult?: (result: SpeechRecognitionResult) => void
-  onStart?: () => void
-  onEnd?: () => void
-  onError?: (error: Error) => void
-}
-
-// Main speech recognition class
-export class SpeechRecognition {
+class SpeechRecognitionService {
   private recognition: any
   private isListening = false
-  private listener: SpeechRecognitionListener = {}
+  private transcript = ""
+  private interimTranscript = ""
+  private onResultCallback: ((transcript: string, isFinal: boolean) => void) | null = null
+  private onEndCallback: (() => void) | null = null
+  private onStartCallback: (() => void) | null = null
+  private onErrorCallback: ((error: any) => void) | null = null
+  private autoRestartOnEnd = false
 
-  constructor() {
+  constructor(options: SpeechRecognitionOptions = {}) {
     // Check if browser supports speech recognition
-    const SpeechRecognitionAPI = window.SpeechRecognition || (window as any).webkitSpeechRecognition
-
-    if (!SpeechRecognitionAPI) {
-      console.warn("Speech recognition not supported in this browser")
+    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+      console.error("Speech recognition not supported in this browser")
       return
     }
 
-    this.recognition = new SpeechRecognitionAPI()
-    this.recognition.continuous = true
-    this.recognition.interimResults = true
-    this.recognition.lang = "en-US"
+    // Initialize speech recognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    this.recognition = new SpeechRecognition()
 
-    this.setupEventListeners()
+    // Configure
+    this.recognition.continuous = options.continuous !== undefined ? options.continuous : true
+    this.recognition.interimResults = options.interimResults !== undefined ? options.interimResults : true
+    this.recognition.lang = options.language || "en-US"
+
+    // Set up event handlers
+    this.recognition.onresult = this.handleResult.bind(this)
+    this.recognition.onend = this.handleEnd.bind(this)
+    this.recognition.onstart = this.handleStart.bind(this)
+    this.recognition.onerror = this.handleError.bind(this)
   }
 
-  private setupEventListeners() {
+  private handleResult(event: any): void {
+    this.interimTranscript = ""
+    this.transcript = ""
+
+    // Process results
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        this.transcript += event.results[i][0].transcript
+      } else {
+        this.interimTranscript += event.results[i][0].transcript
+      }
+    }
+
+    // Call callback with results
+    if (this.onResultCallback) {
+      const isFinal = this.interimTranscript === ""
+      this.onResultCallback(isFinal ? this.transcript : this.interimTranscript, isFinal)
+    }
+  }
+
+  private handleEnd(): void {
+    this.isListening = false
+
+    // Auto restart if enabled
+    if (this.autoRestartOnEnd) {
+      this.start()
+    } else if (this.onEndCallback) {
+      this.onEndCallback()
+    }
+  }
+
+  private handleStart(): void {
+    this.isListening = true
+    this.transcript = ""
+    this.interimTranscript = ""
+
+    if (this.onStartCallback) {
+      this.onStartCallback()
+    }
+  }
+
+  private handleError(event: any): void {
+    console.error("Speech recognition error:", event.error)
+
+    if (this.onErrorCallback) {
+      this.onErrorCallback(event.error)
+    }
+
+    // Auto restart on certain errors
+    if (event.error === "network" || event.error === "aborted") {
+      setTimeout(() => {
+        if (this.autoRestartOnEnd) {
+          this.start()
+        }
+      }, 1000)
+    }
+  }
+
+  start(autoRestart = false): void {
     if (!this.recognition) return
 
-    this.recognition.onresult = (event: any) => {
-      if (!event.results) return
-
-      const result = event.results[event.results.length - 1]
-      if (!result) return
-
-      const transcript = result[0]?.transcript || ""
-      const confidence = result[0]?.confidence || 0
-      const isFinal = result.isFinal || false
-
-      this.listener.onResult?.({
-        transcript,
-        isFinal,
-        confidence,
-      })
-    }
-
-    this.recognition.onstart = () => {
-      this.isListening = true
-      this.listener.onStart?.()
-    }
-
-    this.recognition.onend = () => {
-      this.isListening = false
-      this.listener.onEnd?.()
-    }
-
-    this.recognition.onerror = (event: any) => {
-      this.listener.onError?.(new Error(event.error || "Speech recognition error"))
-    }
-  }
-
-  public start() {
-    if (!this.recognition) {
-      this.listener.onError?.(new Error("Speech recognition not supported"))
-      return
-    }
-
-    if (this.isListening) return
+    this.autoRestartOnEnd = autoRestart
 
     try {
       this.recognition.start()
-    } catch (error) {
-      this.listener.onError?.(error as Error)
+    } catch (e) {
+      console.error("Error starting speech recognition:", e)
+
+      // If already started, stop and restart
+      if ((e as any).name === "InvalidStateError") {
+        this.recognition.stop()
+        setTimeout(() => this.start(autoRestart), 100)
+      }
     }
   }
 
-  public stop() {
-    if (!this.recognition || !this.isListening) return
+  stop(): void {
+    if (!this.recognition) return
 
+    this.autoRestartOnEnd = false
     try {
       this.recognition.stop()
-    } catch (error) {
-      this.listener.onError?.(error as Error)
+    } catch (e) {
+      console.error("Error stopping speech recognition:", e)
     }
   }
 
-  public setListener(listener: SpeechRecognitionListener) {
-    this.listener = listener
+  onResult(callback: (transcript: string, isFinal: boolean) => void): void {
+    this.onResultCallback = callback
   }
 
-  public isSupported(): boolean {
-    return !!this.recognition
+  onEnd(callback: () => void): void {
+    this.onEndCallback = callback
+  }
+
+  onStart(callback: () => void): void {
+    this.onStartCallback = callback
+  }
+
+  onError(callback: (error: any) => void): void {
+    this.onErrorCallback = callback
+  }
+
+  get listening(): boolean {
+    return this.isListening
+  }
+
+  getCurrentTranscript(): string {
+    return this.transcript || this.interimTranscript
   }
 }
 
 // Singleton instance
-let instance: SpeechRecognition | null = null
+let recognitionInstance: SpeechRecognitionService | null = null
 
-// Getter function for the singleton instance
-export function getSpeechRecognition(): SpeechRecognition {
-  if (!instance && typeof window !== "undefined") {
-    instance = new SpeechRecognition()
+export function getSpeechRecognition(): SpeechRecognitionService {
+  if (!recognitionInstance) {
+    recognitionInstance = new SpeechRecognitionService({
+      continuous: true,
+      interimResults: true,
+    })
   }
-  return instance as SpeechRecognition
+
+  return recognitionInstance
 }
